@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudFormation template for an Ubuntu 24.04 EC2 instance with Docker and security group setup"
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "The existing default VPC ID"
+
+  KeyName:
+    Description: "Name of an existing EC2 KeyPair to allow SSH access"
+    Type: "AWS::EC2::KeyPair::KeyName"
+
+  Domain:
+    Description: "The domain name for the web server"
+    Type: String
+  
+  WebServerHostedZoneId:
+    Description: "The ID for the hosted zone created when registering the domain in Route 53"
+    Type: String
+
+Resources:
+  WebServerSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Allow SSH, HTTP, and HTTPS access"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # Allow SSH from anywhere
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0  # Allow HTTP from anywhere
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0  # Allow HTTPS from anywhere
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0  # Allow all outbound traffic
+
+  WebServerEC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: "ami-04b4f1a9cf54c11d0"
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e  # Exit on error
+
+          # Update and install Docker
+          apt-get update -y
+          apt-get install -y docker.io python3-venv libaugeas0
+          systemctl enable docker
+          systemctl start docker
+          usermod -aG docker ubuntu  # Add the default user to the Docker group
+
+          echo "Docker installed successfully."
+
+          # Install Docker Compose
+          mkdir -p /usr/lib/docker/cli-plugins
+          curl -L "https://github.com/docker/compose/releases/download/v2.33.1/docker-compose-linux-x86_64" -o /usr/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/lib/docker/cli-plugins/docker-compose
+
+          # Verify installation
+          docker --version
+          docker compose version
+
+          echo "Docker Compose installed successfully."
+
+          # Install Certbot
+          apt-get install -y python3-venv libaugeas0
+          python3 -m venv /opt/certbot/
+          /opt/certbot/bin/pip install --upgrade pip
+          /opt/certbot/bin/pip install certbot certbot-nginx
+          ln -s /opt/certbot/bin/certbot /usr/bin/certbot
+          certbot certonly --standalone -d ${Domain} --agree-tos --email david.scheuermann3@gmail.com --non-interactive
+          # Add cron job to update cert
+          echo "0 0,12 * * * root /opt/certbot/bin/python -c 'import random; import time; time.sleep(random.random() * 3600)' && sudo certbot renew -q" | sudo tee -a /etc/crontab > /dev/null
+          set DOMAIN=${Domain}
+      Tags:
+        - Key: "Name"
+          Value: "Ubuntu24-Docker-Instance"
+    
+  WebServerDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref WebServerHostedZoneId
+      Name: !Ref Domain  # The subdomain or root domain you want to configure
+      Type: A
+      TTL: '300'
+      ResourceRecords:
+        - !GetAtt WebServerEC2Instance.PublicIp  # Use EC2 public IP directly
+
+Outputs:
+  InstanceId:
+    Description: "ID of the created EC2 instance"
+    Value: !Ref WebServerEC2Instance
+  PublicIp:
+    Description: "Public IP of the instance"
+    Value: !GetAtt WebServerEC2Instance.PublicIp

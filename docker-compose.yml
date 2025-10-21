@@ -1,0 +1,37 @@
+services:
+  portfolio:
+    image: ${DOCKER_USER:-dsmann12}/portfolio:latest
+    volumes:
+      - ./staticfiles/portfolio:/app/staticfiles  # Mount static files
+    environment:
+      PORTFOLIO_DJANGO_SECRET: ${PORTFOLIO_DJANGO_SECRET}
+      PORTFOLIO_DEBUG: ${PORTFOLIO_DEBUG}
+      PORTFOLIO_ALLOWED_HOSTS: ${PORTFOLIO_ALLOWED_HOSTS}
+    ports:
+      - "8001:8000"
+    restart: always
+
+  nginx:
+    image: nginx:latest
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - 80:80
+      - ${PORTFOLIO_PORT}:443
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/templates:/etc/nginx/templates
+      - ./staticfiles/portfolio:/app/staticfiles  # Serve collected static files
+      - ${PORTFOLIO_SSL_LIVE_DIR}:/etc/letsencrypt/live/${DOMAIN}:ro
+      - ${PORTFOLIO_SSL_ARCHIVE_DIR}:/etc/letsencrypt/archive/${DOMAIN}:ro
+      - ${PORTFOLIO_SSL_KEYS_DIR}:/etc/letsencrypt/keys:ro
+    depends_on:
+      - portfolio
+    restart: always
+  
+networks:
+  default:
+    name: web-infra
+
+volumes:
+  static_volume:

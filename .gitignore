@@ -1,0 +1,11 @@
+# environment variables
+.env
+
+# IDE settings
+.vscode
+
+# Django collected static files
+staticfiles
+
+# dev folders
+.certs

@@ -1,0 +1,58 @@
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudFormation template for resources needed for CI/CD with GitHub Actions OIDC"
+
+Parameters:
+  AWSAccountId:
+    Type: String
+    Description: "The AWS Account ID where the GitHub OIDC Provider is created"
+
+  GitHubRepo:
+    Type: String
+    Description: "The GitHub repository in the format 'owner/repo'"
+    Default: "dsmann12/web-infra"
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: "https://token.actions.githubusercontent.com"
+      ClientIdList:
+        - "sts.amazonaws.com"
+      ThumbprintList:
+        - "74f3a68f16524f15424927704c9506f55a9316bd"  # GitHub’s root CA thumbprint
+
+  GithubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GithubActionsDeployRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWSAccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+              StringLike:
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubRepo}:*"
+      Policies:
+        - PolicyName: GithubActionsDeployPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:*"
+                  - "cloudformation:*"
+                  - "ec2:*"
+                  - "iam:PassRole"
+                  - "route53:CreateHostedZone"
+                  - "route53:GetHostedZone"
+                  - "route53:GetChange"
+                  - "route53:ChangeResourceRecordSets"
+                  - "route53:ListHostedZones"
+                  - "route53:ListResourceRecordSets"
+                Resource: "*"

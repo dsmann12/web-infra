@@ -1,0 +1,78 @@
+on:
+  push:
+    branches-ignore:
+      - 'main' # Don't run this on main branch. Will be run with deploy workflow
+  pull_request: # Runs when a PR is created or updated
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: none
+      contents: read
+    env:
+      PORTFOLIO_DJANGO_SECRET: ${{ secrets.PORTFOLIO_DJANGO_SECRET }}
+      PORTFOLIO_DEBUG: true
+      PORTFOLIO_ALLOWED_HOSTS: localhost,127.0.0.1
+      ACCEPTANCE_TEST_SERVER_URL: https://localhost
+      DOMAIN: localhost
+      PORTFOLIO_HOST: localhost
+      PORTFOLIO_PORT: 443
+      PORTFOLIO_SSL_LIVE_DIR: ./.certs/live/localhost
+      PORTFOLIO_SSL_ARCHIVE_DIR: ./.certs/archive/localhost
+      PORTFOLIO_SSL_KEYS_DIR: ./.certs/keys
+      PLAYWRIGHT_IGNORE_HTTPS_ERRORS: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Generate Self Signed Certificate
+        run: |
+          chmod +x ./scripts/generate_local_certs.sh
+          ./scripts/generate_local_certs.sh
+
+      - name: Create .env file locally
+        run: |
+          echo "PORTFOLIO_DJANGO_SECRET=$PORTFOLIO_DJANGO_SECRET" > .env
+          echo "PORTFOLIO_DEBUG=$PORTFOLIO_DEBUG" >> .env
+          echo "PORTFOLIO_ALLOWED_HOSTS=$PORTFOLIO_ALLOWED_HOSTS" >> .env
+          echo "DOMAIN=$DOMAIN" >> .env
+          echo "PORTFOLIO_HOST=$PORTFOLIO_HOST" >> .env
+          echo "PORTFOLIO_PORT=$PORTFOLIO_PORT" >> .env
+          echo "PORTFOLIO_SSL_LIVE_DIR=$PORTFOLIO_SSL_LIVE_DIR" >> .env
+          echo "PORTFOLIO_SSL_ARCHIVE_DIR=$PORTFOLIO_SSL_ARCHIVE_DIR" >> .env
+          echo "PORTFOLIO_SSL_KEYS_DIR=$PORTFOLIO_SSL_KEYS_DIR" >> .env
+          echo "ACCEPTANCE_TEST_SERVER_URL=$ACCEPTANCE_TEST_SERVER_URL" >> .env
+          echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=$PLAYWRIGHT_IGNORE_HTTPS_ERRORS" >> .env
+
+      - name: Pull Docker images
+        run: |
+          docker compose pull
+
+      - name: Run Web Services with Docker Compose
+        run: |
+          docker compose up -d
+      
+      - name: Wait for the web server to be ready (with timeout)
+        run: |
+          timeout=60  # Timeout after 60 seconds
+          elapsed=0
+          while ! curl --silent --head --fail -k $ACCEPTANCE_TEST_SERVER_URL; do
+            if [ $elapsed -ge $timeout ]; then
+              echo "Timeout reached, web server is not up after $timeout seconds."
+              exit 1  # Fail the step
+            fi
+            echo "Waiting for web server to be ready... $elapsed seconds elapsed."
+            sleep 5
+            ((elapsed+=5))
+          done
+          echo "Web server is up and running!"
